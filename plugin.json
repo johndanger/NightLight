@@ -1,0 +1,13 @@
+{
+  "id": "dev.johndanger.nightlight",
+  "name": "Night Light",
+  "description": "Automatically toggle night mode based on sunrise and sunset times",
+  "version": "1.0.0",
+  "author": "johndanger",
+  "type": "widget",
+  "icon": "nightlight",
+  "component": "./NightLight.qml",
+  "settings": "./NightLightSettings.qml",
+  "permissions": []
+}
+
