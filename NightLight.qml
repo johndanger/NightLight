@@ -17,39 +17,14 @@ PluginComponent {
     property string mode: "auto" // "auto" or "manual"
     property int temperature: 4000  // Color temperature in Kelvin (2500-6000)
     
-    // Bind to pluginData if available
-    Binding {
-        target: root
-        property: "latitude"
-        value: (pluginData && pluginData.latitude !== undefined) ? pluginData.latitude : 40.7128
-        when: pluginData !== undefined
-    }
-    
-    Binding {
-        target: root
-        property: "longitude"
-        value: (pluginData && pluginData.longitude !== undefined) ? pluginData.longitude : -74.0060
-        when: pluginData !== undefined
-    }
-    
-    // Watch for pluginData changes and update immediately
-    Connections {
-        target: pluginData
-        function onLatitudeChanged() {
-            if (pluginData && pluginData.latitude !== undefined) {
-                root.latitude = pluginData.latitude
-            }
-        }
-        function onLongitudeChanged() {
-            if (pluginData && pluginData.longitude !== undefined) {
-                root.longitude = pluginData.longitude
-            }
-        }
-    }
-    
     // Calculated sunrise/sunset times (in minutes since midnight)
     property int sunriseMinutes: 0
     property int sunsetMinutes: 0
+    
+    // Custom time settings (in minutes since midnight)
+    property bool useCustomTimes: false  // Use custom times instead of sunrise/sunset
+    property int customStartTime: 1260  // Default: 9:00 PM (21:00 = 21*60 = 1260)
+    property int customEndTime: 420  // Default: 7:00 AM (7*60 = 420)
     
     // Current time in minutes since midnight
     property int currentMinutes: 0
@@ -195,16 +170,9 @@ PluginComponent {
                         from: 2500
                         to: 6000
                         stepSize: 100
+                        value: root.temperature
                         
                         property bool isUserDragging: false
-                        
-                        // Update value from root.temperature only when not being dragged
-                        Binding {
-                            target: temperatureSlider
-                            property: "value"
-                            value: root.temperature
-                            when: !temperatureSlider.isUserDragging
-                        }
                         
                         onPressedChanged: {
                             isUserDragging = pressed
@@ -278,7 +246,97 @@ PluginComponent {
                     
                     StyledText {
                         width: parent.width
-                        text: "Enter your coordinates for accurate sunrise/sunset calculations"
+                        text: "Search by city name or enter coordinates manually"
+                        font.pixelSize: Theme.fontSizeSmall
+                        color: Theme.surfaceVariantText
+                        wrapMode: Text.WordWrap
+                    }
+                    
+                    // City search
+                    Column {
+                        width: parent.width
+                        spacing: Theme.spacingXS
+                        
+                        StyledText {
+                            text: "Search City"
+                            font.pixelSize: Theme.fontSizeSmall
+                            color: Theme.surfaceText
+                        }
+                        
+                        StyledText {
+                            text: "e.g., New York, London, Tokyo"
+                            font.pixelSize: Theme.fontSizeSmall
+                            color: Theme.surfaceVariantText
+                        }
+                        
+                        Row {
+                            width: parent.width
+                            spacing: Theme.spacingS
+                            
+                            StyledRect {
+                                width: parent.width - 80
+                                height: 40
+                                color: Theme.surfaceContainerHigh
+                                radius: Theme.cornerRadius
+                                border.width: 1
+                                border.color: cityInput.activeFocus ? Theme.primary : Theme.outlineVariant
+                                
+                                TextInput {
+                                    id: cityInput
+                                    anchors.fill: parent
+                                    anchors.leftMargin: Theme.spacingM
+                                    anchors.rightMargin: Theme.spacingM
+                                    verticalAlignment: TextInput.AlignVCenter
+                                    color: Theme.surfaceText
+                                    font.pixelSize: Theme.fontSizeMedium
+                                    selectByMouse: true
+                                    
+                                    onAccepted: {
+                                        if (text.trim() !== "") {
+                                            root.searchCity(text.trim())
+                                        }
+                                    }
+                                }
+                            }
+                            
+                            StyledRect {
+                                width: 70
+                                height: 40
+                                color: searchButtonMouseArea.containsMouse ? Theme.surfaceContainerHighest : Theme.primary
+                                radius: Theme.cornerRadius
+                                border.width: 0
+                                
+                                StyledText {
+                                    anchors.centerIn: parent
+                                    text: geocodeProcess.running ? "..." : "Search"
+                                    color: Theme.onPrimary
+                                    font.pixelSize: Theme.fontSizeSmall
+                                }
+                                
+                                MouseArea {
+                                    id: searchButtonMouseArea
+                                    anchors.fill: parent
+                                    hoverEnabled: true
+                                    cursorShape: Qt.PointingHandCursor
+                                    onClicked: {
+                                        if (cityInput.text.trim() !== "" && !geocodeProcess.running) {
+                                            root.searchCity(cityInput.text.trim())
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    
+                    Rectangle {
+                        width: parent.width
+                        height: 1
+                        color: Theme.outlineVariant
+                    }
+                    
+                    StyledText {
+                        width: parent.width
+                        text: "Or enter coordinates manually:"
                         font.pixelSize: Theme.fontSizeSmall
                         color: Theme.surfaceVariantText
                         wrapMode: Text.WordWrap
@@ -449,6 +507,250 @@ PluginComponent {
                         color: Theme.outlineVariant
                     }
                     
+                    Rectangle {
+                        width: parent.width
+                        height: 1
+                        color: Theme.outlineVariant
+                    }
+                    
+                    StyledText {
+                        width: parent.width
+                        text: "Time Settings"
+                        font.pixelSize: Theme.fontSizeMedium
+                        font.weight: Font.Bold
+                        color: Theme.surfaceText
+                    }
+                    
+                    // Toggle between sunrise/sunset and custom times
+                    StyledRect {
+                        width: parent.width
+                        height: 44
+                        color: customTimesMouseArea.containsMouse ? Theme.surfaceContainerHighest : (root.useCustomTimes ? Theme.primary : Theme.surfaceContainerHigh)
+                        radius: Theme.cornerRadius
+                        border.width: 0
+                        
+                        StyledText {
+                            anchors.left: parent.left
+                            anchors.leftMargin: Theme.spacingM
+                            anchors.verticalCenter: parent.verticalCenter
+                            text: "Use Custom Times"
+                            color: root.useCustomTimes ? Theme.onPrimary : Theme.surfaceText
+                            font.pixelSize: Theme.fontSizeMedium
+                        }
+                        
+                        MouseArea {
+                            id: customTimesMouseArea
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: {
+                                root.useCustomTimes = !root.useCustomTimes
+                                root.saveTimeSettings()
+                                if (root.mode === "auto") {
+                                    checkAndUpdateNightMode()
+                                }
+                            }
+                        }
+                    }
+                    
+                    // Custom time inputs (shown when useCustomTimes is true)
+                    Column {
+                        width: parent.width
+                        spacing: Theme.spacingM
+                        visible: root.useCustomTimes
+                        
+                        StyledText {
+                            width: parent.width
+                            text: "Set custom start and end times for night mode"
+                            font.pixelSize: Theme.fontSizeSmall
+                            color: Theme.surfaceVariantText
+                            wrapMode: Text.WordWrap
+                        }
+                        
+                        // Start time input
+                        Column {
+                            width: parent.width
+                            spacing: Theme.spacingXS
+                            
+                            StyledText {
+                                text: "Start Time (when night mode enables)"
+                                font.pixelSize: Theme.fontSizeSmall
+                                color: Theme.surfaceText
+                            }
+                            
+                            StyledRect {
+                                width: parent.width
+                                height: 40
+                                color: Theme.surfaceContainerHigh
+                                radius: Theme.cornerRadius
+                                border.width: 1
+                                border.color: startTimeInput.activeFocus ? Theme.primary : Theme.outlineVariant
+                                
+                                TextInput {
+                                    id: startTimeInput
+                                    anchors.fill: parent
+                                    anchors.leftMargin: Theme.spacingM
+                                    anchors.rightMargin: Theme.spacingM
+                                    verticalAlignment: TextInput.AlignVCenter
+                                    color: Theme.surfaceText
+                                    font.pixelSize: Theme.fontSizeMedium
+                                    selectByMouse: true
+                                    
+                                    Component.onCompleted: {
+                                        var hours = Math.floor(root.customStartTime / 60) % 24
+                                        var mins = root.customStartTime % 60
+                                        text = hours.toString().padStart(2, '0') + ":" + mins.toString().padStart(2, '0')
+                                    }
+                                    
+                                    onAccepted: {
+                                        var parts = text.split(":")
+                                        if (parts.length === 2) {
+                                            var hours = parseInt(parts[0])
+                                            var mins = parseInt(parts[1])
+                                            if (!isNaN(hours) && !isNaN(mins) && hours >= 0 && hours < 24 && mins >= 0 && mins < 60) {
+                                                var time = hours * 60 + mins
+                                                root.customStartTime = time
+                                                root.saveTimeSettings()
+                                                if (root.mode === "auto") {
+                                                    root.checkAndUpdateNightMode()
+                                                }
+                                            } else {
+                                                var h = Math.floor(root.customStartTime / 60) % 24
+                                                var m = root.customStartTime % 60
+                                                text = h.toString().padStart(2, '0') + ":" + m.toString().padStart(2, '0')
+                                            }
+                                        }
+                                    }
+                                    
+                                    onEditingFinished: {
+                                        var parts = text.split(":")
+                                        if (parts.length === 2) {
+                                            var hours = parseInt(parts[0])
+                                            var mins = parseInt(parts[1])
+                                            if (!isNaN(hours) && !isNaN(mins) && hours >= 0 && hours < 24 && mins >= 0 && mins < 60) {
+                                                var time = hours * 60 + mins
+                                                root.customStartTime = time
+                                                root.saveTimeSettings()
+                                                if (root.mode === "auto") {
+                                                    root.checkAndUpdateNightMode()
+                                                }
+                                            } else {
+                                                var h = Math.floor(root.customStartTime / 60) % 24
+                                                var m = root.customStartTime % 60
+                                                text = h.toString().padStart(2, '0') + ":" + m.toString().padStart(2, '0')
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        
+                        // End time input
+                        Column {
+                            width: parent.width
+                            spacing: Theme.spacingXS
+                            
+                            StyledText {
+                                text: "End Time (when night mode disables)"
+                                font.pixelSize: Theme.fontSizeSmall
+                                color: Theme.surfaceText
+                            }
+                            
+                            StyledRect {
+                                width: parent.width
+                                height: 40
+                                color: Theme.surfaceContainerHigh
+                                radius: Theme.cornerRadius
+                                border.width: 1
+                                border.color: endTimeInput.activeFocus ? Theme.primary : Theme.outlineVariant
+                                
+                                TextInput {
+                                    id: endTimeInput
+                                    anchors.fill: parent
+                                    anchors.leftMargin: Theme.spacingM
+                                    anchors.rightMargin: Theme.spacingM
+                                    verticalAlignment: TextInput.AlignVCenter
+                                    color: Theme.surfaceText
+                                    font.pixelSize: Theme.fontSizeMedium
+                                    selectByMouse: true
+                                    
+                                    Component.onCompleted: {
+                                        var hours = Math.floor(root.customEndTime / 60) % 24
+                                        var mins = root.customEndTime % 60
+                                        text = hours.toString().padStart(2, '0') + ":" + mins.toString().padStart(2, '0')
+                                    }
+                                    
+                                    onAccepted: {
+                                        var parts = text.split(":")
+                                        if (parts.length === 2) {
+                                            var hours = parseInt(parts[0])
+                                            var mins = parseInt(parts[1])
+                                            if (!isNaN(hours) && !isNaN(mins) && hours >= 0 && hours < 24 && mins >= 0 && mins < 60) {
+                                                var time = hours * 60 + mins
+                                                root.customEndTime = time
+                                                root.saveTimeSettings()
+                                                if (root.mode === "auto") {
+                                                    root.checkAndUpdateNightMode()
+                                                }
+                                            } else {
+                                                var h = Math.floor(root.customEndTime / 60) % 24
+                                                var m = root.customEndTime % 60
+                                                text = h.toString().padStart(2, '0') + ":" + m.toString().padStart(2, '0')
+                                            }
+                                        }
+                                    }
+                                    
+                                    onEditingFinished: {
+                                        var parts = text.split(":")
+                                        if (parts.length === 2) {
+                                            var hours = parseInt(parts[0])
+                                            var mins = parseInt(parts[1])
+                                            if (!isNaN(hours) && !isNaN(mins) && hours >= 0 && hours < 24 && mins >= 0 && mins < 60) {
+                                                var time = hours * 60 + mins
+                                                root.customEndTime = time
+                                                root.saveTimeSettings()
+                                                if (root.mode === "auto") {
+                                                    root.checkAndUpdateNightMode()
+                                                }
+                                            } else {
+                                                var h = Math.floor(root.customEndTime / 60) % 24
+                                                var m = root.customEndTime % 60
+                                                text = h.toString().padStart(2, '0') + ":" + m.toString().padStart(2, '0')
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    
+                    // Sunrise/Sunset info (shown when NOT using custom times)
+                    Column {
+                        width: parent.width
+                        spacing: Theme.spacingXS
+                        visible: !root.useCustomTimes
+                        
+                        StyledText {
+                            width: parent.width
+                            text: "Sunrise: " + root.formatTime(root.sunriseMinutes)
+                            font.pixelSize: Theme.fontSizeSmall
+                            color: Theme.surfaceVariantText
+                        }
+                        
+                        StyledText {
+                            width: parent.width
+                            text: "Sunset: " + root.formatTime(root.sunsetMinutes)
+                            font.pixelSize: Theme.fontSizeSmall
+                            color: Theme.surfaceVariantText
+                        }
+                    }
+                    
+                    Rectangle {
+                        width: parent.width
+                        height: 1
+                        color: Theme.outlineVariant
+                    }
+                    
                     StyledText {
                         width: parent.width
                         text: "Current Status"
@@ -466,21 +768,16 @@ PluginComponent {
                     
                     StyledText {
                         width: parent.width
-                        text: "Sunrise: " + formatTime(root.sunriseMinutes)
+                        text: "Current: " + root.formatTime(root.currentMinutes)
                         font.pixelSize: Theme.fontSizeSmall
                         color: Theme.surfaceVariantText
                     }
                     
                     StyledText {
                         width: parent.width
-                        text: "Sunset: " + formatTime(root.sunsetMinutes)
-                        font.pixelSize: Theme.fontSizeSmall
-                        color: Theme.surfaceVariantText
-                    }
-                    
-                    StyledText {
-                        width: parent.width
-                        text: "Current: " + formatTime(root.currentMinutes)
+                        text: root.useCustomTimes ? 
+                              ("Night mode: " + root.formatTime(root.customStartTime) + " - " + root.formatTime(root.customEndTime)) :
+                              ("Night mode: " + root.formatTime(root.sunsetMinutes) + " - " + root.formatTime(root.sunriseMinutes))
                         font.pixelSize: Theme.fontSizeSmall
                         color: Theme.surfaceVariantText
                     }
@@ -495,11 +792,9 @@ PluginComponent {
         MouseArea {
             anchors.fill: parent
             hoverEnabled: true
-            cursorShape: root.mode === "manual" ? Qt.PointingHandCursor : Qt.ArrowCursor
+            cursorShape: Qt.PointingHandCursor
             onClicked: {
-                if (root.mode === "manual") {
-                    root.handleClick()
-                }
+                root.handleClick()
             }
             
             DankIcon {
@@ -517,11 +812,9 @@ PluginComponent {
         MouseArea {
             anchors.fill: parent
             hoverEnabled: true
-            cursorShape: root.mode === "manual" ? Qt.PointingHandCursor : Qt.ArrowCursor
+            cursorShape: Qt.PointingHandCursor
             onClicked: {
-                if (root.mode === "manual") {
-                    root.handleClick()
-                }
+                root.handleClick()
             }
             
             DankIcon {
@@ -655,7 +948,7 @@ PluginComponent {
     // Process to set location via IPC
     Process {
         id: locationProcess
-        command: ["dms", "ipc", "call", "night", "location", root.latitude.toString(), root.longitude.toString()]
+        command: [] // Will be set dynamically
 
         stdout: SplitParser {
             onRead: line => {
@@ -670,6 +963,12 @@ PluginComponent {
                 }
             }
         }
+    }
+    
+    function setLocationViaIPC() {
+        // Use -- to separate flags from arguments, preventing negative numbers from being interpreted as flags
+        locationProcess.command = ["dms", "ipc", "call", "night", "location", "--", root.latitude.toString(), root.longitude.toString()]
+        locationProcess.running = true
     }
 
     // Process to get temperature
@@ -710,7 +1009,7 @@ PluginComponent {
     // Process to set temperature
     Process {
         id: temperatureSetProcess
-        command: ["dms", "ipc", "call", "night", "temperature", root.temperature.toString()]
+        command: [] // Will be set dynamically
 
         stdout: SplitParser {
             onRead: line => {
@@ -727,6 +1026,58 @@ PluginComponent {
         }
     }
 
+    // Process to geocode city name
+    Process {
+        id: geocodeProcess
+        
+        property string output: ""
+        property string currentCity: ""
+        command: [] // Initialize with empty command
+
+        stdout: SplitParser {
+            onRead: line => {
+                geocodeProcess.output += line + "\n"
+            }
+        }
+
+        onExited: (exitCode) => {
+            if (exitCode === 0) {
+                try {
+                    var jsonData = JSON.parse(geocodeProcess.output.trim())
+                    if (jsonData && jsonData.length > 0) {
+                        var result = jsonData[0]
+                        var lat = parseFloat(result.lat)
+                        var lon = parseFloat(result.lon)
+                        
+                        if (!isNaN(lat) && !isNaN(lon)) {
+                            root.latitude = lat
+                            root.longitude = lon
+                            root.saveLocationSettings()
+                            console.log("City geocoded: " + geocodeProcess.currentCity + " -> " + lat + ", " + lon)
+                        } else {
+                            console.error("Failed to parse coordinates from geocoding response")
+                        }
+                    } else {
+                        console.warn("No results found for city: " + geocodeProcess.currentCity)
+                    }
+                } catch (e) {
+                    console.error("Failed to parse geocoding response:", e, geocodeProcess.output)
+                }
+            } else {
+                console.error("Geocoding failed with exit code:", exitCode)
+            }
+            geocodeProcess.output = ""
+        }
+
+        stderr: SplitParser {
+            onRead: line => {
+                if (line.trim()) {
+                    console.warn("Geocoding error:", line)
+                }
+            }
+        }
+    }
+
     function updateCurrentTime() {
         var now = new Date()
         root.currentMinutes = now.getHours() * 60 + now.getMinutes()
@@ -736,80 +1087,93 @@ PluginComponent {
         // Calculate sunrise and sunset using astronomical algorithms
         // Based on NOAA's algorithm for solar position calculations
         
-        var now = new Date()
-        var year = now.getFullYear()
-        var month = now.getMonth() + 1
-        var day = now.getDate()
-        
-        // Calculate day of year
-        var dayOfYear = getDayOfYear(year, month, day)
-        
-        // Calculate solar declination (in radians)
-        var declination = 23.45 * Math.sin((360 * (284 + dayOfYear) / 365) * Math.PI / 180) * Math.PI / 180
-        
-        // Calculate equation of time (in minutes)
-        var B = (360 / 365) * (dayOfYear - 81) * Math.PI / 180
-        var equationOfTime = 9.87 * Math.sin(2 * B) - 7.53 * Math.cos(B) - 1.5 * Math.sin(B)
-        
-        // Calculate solar noon (in minutes from midnight, local time)
-        // Solar noon occurs when the sun is at its highest point
-        // Account for equation of time and longitude offset from timezone meridian
-        // Approximate timezone meridian from system timezone offset
-        var now = new Date()
-        var timezoneOffsetHours = -now.getTimezoneOffset() / 60  // System timezone offset in hours
-        var timezoneMeridian = timezoneOffsetHours * 15  // Approximate timezone meridian (degrees)
-        var longitudeOffset = (root.longitude - timezoneMeridian) * 4 / 60  // Offset in hours
-        var solarNoon = 12.0 - longitudeOffset - equationOfTime / 60  // In hours
-        
-        // Convert to minutes
-        var solarNoonMinutes = solarNoon * 60
-        
-        // Calculate hour angle (when sun is at horizon)
-        var latRad = root.latitude * Math.PI / 180
-        var cosHourAngle = -Math.tan(latRad) * Math.tan(declination)
-        
-        // Handle polar day/night cases
-        if (cosHourAngle > 1) {
-            // Sun never sets (polar day)
-            root.sunriseMinutes = 0
-            root.sunsetMinutes = 1439
-            console.log("Polar day detected - sun never sets")
-            return
-        }
-        if (cosHourAngle < -1) {
-            // Sun never rises (polar night)
-            root.sunriseMinutes = 720
-            root.sunsetMinutes = 720
-            console.log("Polar night detected - sun never rises")
+        // Only calculate if we have valid coordinates
+        if (root.latitude === 0 && root.longitude === 0) {
+            console.warn("Cannot calculate sunrise/sunset: coordinates not set")
             return
         }
         
-        // Calculate hour angle in degrees
-        var hourAngle = Math.acos(cosHourAngle) * 180 / Math.PI
-        
-        // Convert hour angle to time (1 degree = 4 minutes)
-        var timeOffset = hourAngle * 4
-        
-        // Calculate sunrise and sunset (in minutes from midnight)
-        root.sunriseMinutes = Math.round(solarNoonMinutes - timeOffset)
-        root.sunsetMinutes = Math.round(solarNoonMinutes + timeOffset)
-        
-        // Normalize to 0-1439 (minutes in a day)
-        while (root.sunriseMinutes < 0) root.sunriseMinutes += 1440
-        while (root.sunriseMinutes >= 1440) root.sunriseMinutes -= 1440
-        while (root.sunsetMinutes < 0) root.sunsetMinutes += 1440
-        while (root.sunsetMinutes >= 1440) root.sunsetMinutes -= 1440
-        
-        // Validate and log
-        var sunriseHour = Math.floor(root.sunriseMinutes / 60)
-        var sunsetHour = Math.floor(root.sunsetMinutes / 60)
-        
-        if (sunriseHour < 3 || sunriseHour > 11 || sunsetHour < 14 || sunsetHour > 23) {
-            console.warn("Calculated sunrise/sunset times seem unusual. Sunrise:", formatTime(root.sunriseMinutes), 
-                        "Sunset:", formatTime(root.sunsetMinutes), "Check your location coordinates.")
-        } else {
-            console.log("Sunrise:", formatTime(root.sunriseMinutes), "Sunset:", formatTime(root.sunsetMinutes), 
-                       "Current:", formatTime(root.currentMinutes))
+        try {
+            var now = new Date()
+            var year = now.getFullYear()
+            var month = now.getMonth() + 1
+            var day = now.getDate()
+            
+            // Calculate day of year
+            var dayOfYear = getDayOfYear(year, month, day)
+            
+            // Calculate solar declination (in radians)
+            var declination = 23.45 * Math.sin((360 * (284 + dayOfYear) / 365) * Math.PI / 180) * Math.PI / 180
+            
+            // Calculate equation of time (in minutes)
+            var B = (360 / 365) * (dayOfYear - 81) * Math.PI / 180
+            var equationOfTime = 9.87 * Math.sin(2 * B) - 7.53 * Math.cos(B) - 1.5 * Math.sin(B)
+            
+            // Calculate solar noon (in minutes from midnight, local time)
+            // Solar noon occurs when the sun is at its highest point
+            // Account for equation of time and longitude offset from timezone meridian
+            // Approximate timezone meridian from system timezone offset
+            var now2 = new Date()
+            var timezoneOffsetHours = -now2.getTimezoneOffset() / 60  // System timezone offset in hours
+            var timezoneMeridian = timezoneOffsetHours * 15  // Approximate timezone meridian (degrees)
+            var longitudeOffset = (root.longitude - timezoneMeridian) * 4 / 60  // Offset in hours
+            var solarNoon = 12.0 - longitudeOffset - equationOfTime / 60  // In hours
+            
+            // Convert to minutes
+            var solarNoonMinutes = solarNoon * 60
+            
+            // Calculate hour angle (when sun is at horizon)
+            var latRad = root.latitude * Math.PI / 180
+            var cosHourAngle = -Math.tan(latRad) * Math.tan(declination)
+            
+            // Handle polar day/night cases
+            if (cosHourAngle > 1) {
+                // Sun never sets (polar day)
+                root.sunriseMinutes = 0
+                root.sunsetMinutes = 1439
+                console.log("Polar day detected - sun never sets")
+                return
+            }
+            if (cosHourAngle < -1) {
+                // Sun never rises (polar night)
+                root.sunriseMinutes = 720
+                root.sunsetMinutes = 720
+                console.log("Polar night detected - sun never rises")
+                return
+            }
+            
+            // Calculate hour angle in degrees
+            var hourAngle = Math.acos(cosHourAngle) * 180 / Math.PI
+            
+            // Convert hour angle to time (1 degree = 4 minutes)
+            var timeOffset = hourAngle * 4
+            
+            // Calculate sunrise and sunset (in minutes from midnight)
+            root.sunriseMinutes = Math.round(solarNoonMinutes - timeOffset)
+            root.sunsetMinutes = Math.round(solarNoonMinutes + timeOffset)
+            
+            // Normalize to 0-1439 (minutes in a day)
+            while (root.sunriseMinutes < 0) root.sunriseMinutes += 1440
+            while (root.sunriseMinutes >= 1440) root.sunriseMinutes -= 1440
+            while (root.sunsetMinutes < 0) root.sunsetMinutes += 1440
+            while (root.sunsetMinutes >= 1440) root.sunsetMinutes -= 1440
+            
+            // Validate and log
+            var sunriseHour = Math.floor(root.sunriseMinutes / 60)
+            var sunsetHour = Math.floor(root.sunsetMinutes / 60)
+            
+            if (sunriseHour < 3 || sunriseHour > 11 || sunsetHour < 14 || sunsetHour > 23) {
+                console.warn("Calculated sunrise/sunset times seem unusual. Sunrise:", root.formatTime(root.sunriseMinutes), 
+                            "Sunset:", root.formatTime(root.sunsetMinutes), "Check your location coordinates.")
+            } else {
+                console.log("Sunrise:", root.formatTime(root.sunriseMinutes), "Sunset:", root.formatTime(root.sunsetMinutes), 
+                           "Current:", root.formatTime(root.currentMinutes))
+            }
+        } catch (e) {
+            console.error("Error calculating sunrise/sunset:", e)
+            // Set default values on error
+            root.sunriseMinutes = 420  // 7:00 AM
+            root.sunsetMinutes = 1260  // 9:00 PM
         }
     }
     
@@ -833,6 +1197,24 @@ PluginComponent {
         var displayHours = hours % 12
         if (displayHours === 0) displayHours = 12
         return displayHours.toString().padStart(2, '0') + ":" + mins.toString().padStart(2, '0') + " " + period
+    }
+    
+    function formatTimeForInput(minutes) {
+        var hours = Math.floor(minutes / 60) % 24
+        var mins = minutes % 60
+        return hours.toString().padStart(2, '0') + ":" + mins.toString().padStart(2, '0')
+    }
+    
+    function parseTimeInput(timeString) {
+        // Parse "HH:MM" format to minutes since midnight
+        var parts = timeString.split(":")
+        if (parts.length !== 2) return -1
+        var hours = parseInt(parts[0])
+        var mins = parseInt(parts[1])
+        if (isNaN(hours) || isNaN(mins) || hours < 0 || hours >= 24 || mins < 0 || mins >= 60) {
+            return -1
+        }
+        return hours * 60 + mins
     }
 
     function handleClick() {
@@ -878,7 +1260,7 @@ PluginComponent {
             console.log("Location settings saved: " + root.latitude + ", " + root.longitude)
             
             // Also set via IPC
-            locationProcess.running = true
+            setLocationViaIPC()
             
             // Recalculate sunrise/sunset if in auto mode
             if (root.mode === "auto") {
@@ -888,13 +1270,45 @@ PluginComponent {
         }
     }
     
+    function saveTimeSettings() {
+        // Save time settings to pluginData
+        if (pluginData) {
+            pluginData.useCustomTimes = root.useCustomTimes
+            pluginData.customStartTime = root.customStartTime
+            pluginData.customEndTime = root.customEndTime
+            console.log("Time settings saved: useCustomTimes=" + root.useCustomTimes + 
+                       ", start=" + root.customStartTime + ", end=" + root.customEndTime)
+        }
+    }
+    
     function setTemperature(temp) {
         root.temperature = temp
+        temperatureSetProcess.command = ["dms", "ipc", "call", "night", "temperature", temp.toString()]
         if (temperatureSetProcess.running) {
             temperatureSetProcess.running = false
         }
         Qt.callLater(() => {
             temperatureSetProcess.running = true
+        })
+    }
+    
+    function searchCity(cityName) {
+        if (cityName.trim() === "") {
+            return
+        }
+        
+        geocodeProcess.currentCity = cityName
+        // Build curl command with proper URL encoding
+        var encodedCity = encodeURIComponent(cityName)
+        var url = "https://nominatim.openstreetmap.org/search?q=" + encodedCity + "&format=json&limit=1"
+        
+        geocodeProcess.command = ["curl", "-s", url]
+        
+        if (geocodeProcess.running) {
+            geocodeProcess.running = false
+        }
+        Qt.callLater(() => {
+            geocodeProcess.running = true
         })
     }
     
@@ -905,57 +1319,76 @@ PluginComponent {
         }
         
         // Determine if we should have night mode enabled
-        // Night mode should be enabled between sunset and sunrise (night time)
         var shouldBeEnabled = false
-        
-        // Validate that we have valid sunrise/sunset times
-        if (root.sunriseMinutes === 0 && root.sunsetMinutes === 0) {
-            console.warn("Invalid sunrise/sunset times, skipping night mode check")
-            return
-        }
-        
-        // Additional validation: if sunrise is after 12 PM or sunset is before 12 PM, calculation is likely wrong
-        // In this case, don't enable night mode during normal daytime hours (8 AM - 8 PM)
         var currentHour = Math.floor(root.currentMinutes / 60)
-        var sunriseHour = Math.floor(root.sunriseMinutes / 60)
-        var sunsetHour = Math.floor(root.sunsetMinutes / 60)
+        var sunriseHour = 0
+        var sunsetHour = 0
         
-        var calculationSeemsWrong = (sunriseHour >= 12 || sunsetHour < 12)
-        
-        if (calculationSeemsWrong) {
-            // If calculation seems wrong and it's clearly daytime (8 AM - 8 PM), disable night mode
-            if (currentHour >= 8 && currentHour < 20) {
-                console.warn("Sunrise/sunset calculation appears incorrect. Disabling night mode during clear daytime hours.")
-                shouldBeEnabled = false
+        if (root.useCustomTimes) {
+            // Use custom times
+            // Handle case where start time is after end time (e.g., 9 PM to 7 AM)
+            if (root.customStartTime > root.customEndTime) {
+                // Night mode: after start time OR before end time
+                shouldBeEnabled = root.currentMinutes >= root.customStartTime || root.currentMinutes < root.customEndTime
             } else {
-                // Outside normal daytime, use the calculation anyway
-                if (root.sunriseMinutes < root.sunsetMinutes) {
-                    shouldBeEnabled = root.currentMinutes >= root.sunsetMinutes || root.currentMinutes < root.sunriseMinutes
-                } else {
-                    shouldBeEnabled = root.currentMinutes >= root.sunsetMinutes && root.currentMinutes < root.sunriseMinutes
-                }
+                // Night mode: between start and end time
+                shouldBeEnabled = root.currentMinutes >= root.customStartTime && root.currentMinutes < root.customEndTime
             }
         } else {
-            // Normal case: sunrise before sunset (typical day)
-            // Night mode should be enabled: after sunset OR before sunrise
-            if (root.sunriseMinutes < root.sunsetMinutes) {
-                shouldBeEnabled = root.currentMinutes >= root.sunsetMinutes || root.currentMinutes < root.sunriseMinutes
-            } 
-            // Edge case: sunset before sunrise (polar regions - midnight sun or polar night)
-            else if (root.sunsetMinutes < root.sunriseMinutes) {
-                // Night mode: between sunset and sunrise
-                shouldBeEnabled = root.currentMinutes >= root.sunsetMinutes && root.currentMinutes < root.sunriseMinutes
-            }
-            // If they're equal, something is wrong - default to disabled
-            else {
-                console.warn("Sunrise and sunset are equal, keeping current state")
+            // Use sunrise/sunset times
+            // Validate that we have valid sunrise/sunset times
+            if (root.sunriseMinutes === 0 && root.sunsetMinutes === 0) {
+                console.warn("Invalid sunrise/sunset times, skipping night mode check")
                 return
+            }
+            
+            sunriseHour = Math.floor(root.sunriseMinutes / 60)
+            sunsetHour = Math.floor(root.sunsetMinutes / 60)
+            
+            // Additional validation: if sunrise is after 12 PM or sunset is before 12 PM, calculation is likely wrong
+            // In this case, don't enable night mode during normal daytime hours (8 AM - 8 PM)
+            var calculationSeemsWrong = (sunriseHour >= 12 || sunsetHour < 12)
+            
+            if (calculationSeemsWrong) {
+                // If calculation seems wrong and it's clearly daytime (8 AM - 8 PM), disable night mode
+                if (currentHour >= 8 && currentHour < 20) {
+                    console.warn("Sunrise/sunset calculation appears incorrect. Disabling night mode during clear daytime hours.")
+                    shouldBeEnabled = false
+                } else {
+                    // Outside normal daytime, use the calculation anyway
+                    if (root.sunriseMinutes < root.sunsetMinutes) {
+                        shouldBeEnabled = root.currentMinutes >= root.sunsetMinutes || root.currentMinutes < root.sunriseMinutes
+                    } else {
+                        shouldBeEnabled = root.currentMinutes >= root.sunsetMinutes && root.currentMinutes < root.sunriseMinutes
+                    }
+                }
+            } else {
+                // Normal case: sunrise before sunset (typical day)
+                // Night mode should be enabled: after sunset OR before sunrise
+                if (root.sunriseMinutes < root.sunsetMinutes) {
+                    shouldBeEnabled = root.currentMinutes >= root.sunsetMinutes || root.currentMinutes < root.sunriseMinutes
+                } 
+                // Edge case: sunset before sunrise (polar regions - midnight sun or polar night)
+                else if (root.sunsetMinutes < root.sunriseMinutes) {
+                    // Night mode: between sunset and sunrise
+                    shouldBeEnabled = root.currentMinutes >= root.sunsetMinutes && root.currentMinutes < root.sunriseMinutes
+                }
+                // If they're equal, something is wrong - default to disabled
+                else {
+                    console.warn("Sunrise and sunset are equal, keeping current state")
+                    return
+                }
             }
         }
         
         // Debug logging
-        console.log("Night mode check: shouldBeEnabled=" + shouldBeEnabled + ", current=" + root.nightModeEnabled + 
-                   ", currentHour=" + currentHour + ", sunriseHour=" + sunriseHour + ", sunsetHour=" + sunsetHour)
+        if (root.useCustomTimes) {
+            console.log("Night mode check: shouldBeEnabled=" + shouldBeEnabled + ", current=" + root.nightModeEnabled + 
+                       ", currentHour=" + currentHour + ", customStart=" + root.formatTime(root.customStartTime) + ", customEnd=" + root.formatTime(root.customEndTime))
+        } else {
+            console.log("Night mode check: shouldBeEnabled=" + shouldBeEnabled + ", current=" + root.nightModeEnabled + 
+                       ", currentHour=" + currentHour + ", sunriseHour=" + sunriseHour + ", sunsetHour=" + sunsetHour)
+        }
         
         // Only update if state needs to change and we're not already changing it
         if (shouldBeEnabled !== root.nightModeEnabled && !root.isChangingState) {
@@ -984,41 +1417,67 @@ PluginComponent {
 
     Component.onCompleted: {
         console.info("NightLight plugin started")
-        console.info("Location: " + root.latitude + ", " + root.longitude)
         
-        // Set location via IPC if we have valid coordinates
-        if (root.latitude !== 0 || root.longitude !== 0) {
-            locationProcess.running = true
+        // Initialize from pluginData if available
+        if (pluginData) {
+            if (pluginData.latitude !== undefined) {
+                root.latitude = pluginData.latitude
+            }
+            if (pluginData.longitude !== undefined) {
+                root.longitude = pluginData.longitude
+            }
+            if (pluginData.useCustomTimes !== undefined) {
+                root.useCustomTimes = pluginData.useCustomTimes
+            }
+            if (pluginData.customStartTime !== undefined) {
+                root.customStartTime = pluginData.customStartTime
+            }
+            if (pluginData.customEndTime !== undefined) {
+                root.customEndTime = pluginData.customEndTime
+            }
         }
         
-        // Initial calculations
-        updateCurrentTime()
-        calculateSunriseSunset()
+        console.info("Location: " + root.latitude + ", " + root.longitude)
         
-        // Get current status
-        statusProcess.running = true
-        
-        // Get current temperature
-        temperatureGetProcess.running = true
-        
-        // Check and update immediately
+        // Delay initialization to avoid issues
         Qt.callLater(() => {
+            // Set location via IPC if we have valid coordinates
+            if (root.latitude !== 0 || root.longitude !== 0) {
+                setLocationViaIPC()
+            }
+            
+            // Initial calculations
+            updateCurrentTime()
+            calculateSunriseSunset()
+            
+            // Get current status
+            statusProcess.running = true
+            
+            // Get current temperature
+            temperatureGetProcess.running = true
+            
+            // Check and update immediately
             checkAndUpdateNightMode()
+            
+            // Mark as initialized so handlers can run
+            root._isInitialized = true
         })
     }
 
-    // Watch for location changes
+    // Watch for location changes (but not during initial load)
+    property bool _isInitialized: false
+    
     onLatitudeChanged: {
-        if (root.latitude !== 0 || root.longitude !== 0) {
-            locationProcess.running = true
+        if (_isInitialized && (root.latitude !== 0 || root.longitude !== 0)) {
+            setLocationViaIPC()
             calculateSunriseSunset()
             checkAndUpdateNightMode()
         }
     }
     
     onLongitudeChanged: {
-        if (root.latitude !== 0 || root.longitude !== 0) {
-            locationProcess.running = true
+        if (_isInitialized && (root.latitude !== 0 || root.longitude !== 0)) {
+            setLocationViaIPC()
             if (root.mode === "auto") {
                 calculateSunriseSunset()
                 checkAndUpdateNightMode()
